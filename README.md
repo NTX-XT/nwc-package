@@ -29,7 +29,7 @@ _**Disclaimer:**_ This is an *unofficial, community driven effort*, not official
 	return nwcPackageManager;
 }
 ```
-## Get matching connecions
+### Get matching connecions
 ```typescript
 public static async getMatchingConnections() {
 	const nwcPackageManager = new NWCPackageManager(undefined, NWCPackageManager.loadPackage('./output/MyTag-package.json'));
@@ -38,7 +38,7 @@ public static async getMatchingConnections() {
 	writeFileSync(`./output/connections.json`, JSON.stringify(connections));
 }
 ```
-## Deploying
+### Deploying
 ```typescript
   public static async deployPackage(reuseExistingWorkflows: boolean) {
 	const targetConnections = JSON.parse(readFileSync('./output/connections.json', 'utf-8')) as INWCConnectionInfo[];

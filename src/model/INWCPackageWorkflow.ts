@@ -6,4 +6,5 @@ export interface INWCPackageWorkflow {
     publishedUrl: string
     order: number
     eventManagerSubscription?: any
+    connectionData? :{ [key: string]: any }
 }

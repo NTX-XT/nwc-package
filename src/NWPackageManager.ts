@@ -1,11 +1,21 @@
 import { readFileSync, writeFileSync } from 'fs'
-import { INWCTenantConnectionInfo, NWCTenant, INWCWorkflowSource, INWCWorkflowAction, INWCConnectionInfo, INWCWorkflowPublishPayload } from 'nwc-sdk'
+import {
+	INWCTenantConnectionInfo,
+	NWCTenant,
+	INWCWorkflowSource,
+	INWCWorkflowAction,
+	INWCConnectionInfo,
+	INWCWorkflowPublishPayload,
+	INWCWorkflowDefinitionDataSourceId,
+	INWCDataSource,
+} from 'nwc-sdk'
 import { INWCPackage } from './model/INWCPackage'
 import { INWCPackageDeploymentOutcome } from './model/INWCPackageDeploymentOutcome'
 import { INWCPackageWorkflow } from './model/INWCPackageWorkflow'
 import { INWCPackageWorkflowConnector } from './model/INWCPackageWorkflowConnector'
 import { ILogging, LogWithStyle } from 'ntx-utils'
 import * as path from 'path'
+import { INWCPackageWorkflowDatasource } from './model/INWCPackageWorkflowDatasource'
 
 interface IWorkflowDependency {
 	workflowId: string
@@ -33,6 +43,9 @@ export class NWCPackageManager implements ILogging {
 
 		if (!this.package.workflows) {
 			this.package.workflows = [] as INWCPackageWorkflow[]
+		}
+		if (!this.package.datasources) {
+			this.package.datasources = [] as INWCPackageWorkflowDatasource[]
 		}
 
 		this.tenant = new NWCTenant()
@@ -62,7 +75,8 @@ export class NWCPackageManager implements ILogging {
 		this.log.writeStart(`Packaging ${this.package.key} from tenant ${this.tenant.tenantInfo.name}`)
 		const allWorkflows = await this.getAllPackageWorkflows()
 		await this.packageWorkflows(allWorkflows, skipExports)
-		await this.packageConnectors(allWorkflows)
+		this.packageConnectors(allWorkflows)
+		this.packageDatasources(allWorkflows)
 		this.package.sourceTenantInfo = this.tenant.tenantInfo
 		if (saveWorkflowsFolderPath) {
 			this.log.writeStart(`Saving workflow sources to folder ${saveWorkflowsFolderPath}`)
@@ -122,6 +136,28 @@ export class NWCPackageManager implements ILogging {
 		return allActions
 	}
 
+	public packageDatasources(sources: INWCWorkflowSource[]) {
+		sources.forEach(source => {
+			for (let key in source.workflowDefinitionAsObject!.settings.datasources) {
+				for (let datasourceId of source.workflowDefinitionAsObject!.settings.datasources[key].sources) {
+					const dataSource = this.tenant.datasources.find(ds => ds.id === datasourceId.id)
+					if (dataSource) {
+						const foundDatasource = this.package.datasources.find(cn => cn.id === dataSource.contractId)
+						if (!foundDatasource) {
+							const foundDatasourceContract = this.tenant.datasourceContracts.find(cnt => cnt.id === dataSource.contractId)!
+							this.package.datasources.push({
+								id: dataSource.contractId,
+								name: foundDatasourceContract.name,
+								datasourceId: dataSource.id,
+								datasourceName: dataSource.name,
+							})
+						}
+					}
+				}
+			}
+		})
+	}
+
 	public packageConnectors(sources: INWCWorkflowSource[]) {
 		sources.forEach(source => {
 			const allActions = NWCPackageManager.getFlatActionsArray(source.workflowDefinitionAsObject!.actions)
@@ -133,25 +169,27 @@ export class NWCPackageManager implements ILogging {
 						: source.workflowDefinitionAsObject!.inUseXtensions[contractId].xtension['x-ntx-contract-id']
 				) as string
 				const actionUsingConnectorId = source.workflowDefinitionAsObject!.inUseXtensions[contractId].usedByActionIds[0]
-				const action = allActions.find(a => a.id === actionUsingConnectorId)!
+				const action = allActions.find(a => a.id === actionUsingConnectorId)
 				let connectionId: string | undefined
-				for (const property of action.configuration.properties) {
-					let foundConnection = property.parameters.find(parameter => parameter.name === "['X_NTX_XTENSION_INPUT']")
-					if (foundConnection) {
-						let key = foundConnection.value.primitiveValue!.valueType.data.value.schema.required.find((p: string) => p.includes('.path.'))
-						if (key) {
-							const connectionConfig = foundConnection.value.primitiveValue!.valueType.data.value.value[key]
-							connectionId = connectionConfig.literal
+				if (action) {
+					for (const property of action?.configuration.properties) {
+						let foundConnection = property.parameters.find(parameter => parameter.name === "['X_NTX_XTENSION_INPUT']")
+						if (foundConnection) {
+							let key = foundConnection.value.primitiveValue!.valueType.data.value.schema.required.find((p: string) => p.includes('.path.'))
+							if (key) {
+								const connectionConfig = foundConnection.value.primitiveValue!.valueType.data.value.value[key]
+								connectionId = connectionConfig.literal
+							}
 						}
 					}
-				}
-				const foundConnector = this.package.connectors.find(cn => cn.id === resolvedContractId)
-				if (!foundConnector) {
-					this.package.connectors.push({
-						id: resolvedContractId,
-						name: source.workflowDefinitionAsObject!.inUseXtensions[contractId].xtension.info.title,
-						connectionId: connectionId,
-					})
+					const foundConnector = this.package.connectors.find(cn => cn.id === resolvedContractId)
+					if (!foundConnector) {
+						this.package.connectors.push({
+							id: resolvedContractId,
+							name: source.workflowDefinitionAsObject!.inUseXtensions[contractId].xtension.info.title,
+							connectionId: connectionId,
+						})
+					}
 				}
 			}
 
@@ -247,8 +285,13 @@ export class NWCPackageManager implements ILogging {
 
 	private async packageWorkflows(sources: INWCWorkflowSource[], skipExports: boolean = false): Promise<void> {
 		this.log.writeStart(`Identifying dependencies`)
-		const dependencies = this.identifyWorklowDependencies(sources)
-		const deployOrder = this.resolveWorkflowDeploymentOrder(dependencies)
+		var deployOrder = [] as String[]
+		if (sources.length == 1) {
+			deployOrder.push(sources[0].workflowName)
+		} else {
+			const dependencies = this.identifyWorklowDependencies(sources)
+			deployOrder = this.resolveWorkflowDeploymentOrder(dependencies)
+		}
 		let order = 1
 		for (var i = 0; i < deployOrder.length; i++) {
 			const workflow = sources.find(w => {
@@ -338,7 +381,7 @@ export class NWCPackageManager implements ILogging {
 			}
 		})
 		this.log.write(`Found ${foundConnections.length} connections against ${this.package.connectors.length} solution required connectors.`)
-		if (foundConnections.length !== this.package.connectors.length) {
+		if (foundConnections.length < this.package.connectors.length) {
 			this.log.writeError(`Only ${foundConnections.length} out of ${this.package.connectors.length} connections found on the tenant`)
 			return false
 		}
@@ -371,7 +414,22 @@ export class NWCPackageManager implements ILogging {
 		return matchedConnectionInfo
 	}
 
-	public async deploy(connections: INWCConnectionInfo[], skipExisting: boolean = false): Promise<INWCPackageDeploymentOutcome> {
+	public getMatchingDatasources(): INWCDataSource[] {
+		const matchedConnectionInfo = [] as INWCDataSource[]
+		this.package.datasources.forEach(datasource => {
+			const matchedConnections = this.tenant.datasources.filter(ds => {
+				return ds.contractId == datasource.id && ds.isInvalid === false
+			})
+			matchedConnectionInfo.push(...matchedConnections)
+		})
+		return matchedConnectionInfo
+	}
+
+	public async deploy(
+		connections: INWCConnectionInfo[],
+		datasources: INWCDataSource[] = [],
+		skipExisting: boolean = false
+	): Promise<INWCPackageDeploymentOutcome> {
 		this.log.writeStart(`Validating tenant ${this.tenant.tenantInfo.name} for deployment`)
 		if (skipExisting) {
 			this.log.writeWarning(`skipExisting was specified. The process will ignore existing workflows`)
@@ -383,6 +441,7 @@ export class NWCPackageManager implements ILogging {
 		const outcome = {
 			tenant: this.tenant.tenantInfo,
 			connections: connections,
+			datasources: datasources,
 			deployedWorkflows: [],
 			completed: false,
 		} as INWCPackageDeploymentOutcome
@@ -413,13 +472,14 @@ export class NWCPackageManager implements ILogging {
 				outcome.deployedWorkflows.push({
 					deployed: publishedWorkflowInfo,
 					packaged: packageWorkflowInfo,
+					publishedSource: publishedSource,
 				})
 			} catch (Error) {
 				outcome.deployedWorkflows.push({
 					packaged: packageWorkflowInfo,
 					publishingErrorSource: source,
 				})
-				this.log.writeError(`Workflow ${packageWorkflowInfo.workflowName} failed to deploy.`)
+				this.log.writeError(`Workflow ${packageWorkflowInfo.workflowName} failed to deploy - ${Error}.`)
 				return outcome
 			}
 		}
@@ -550,6 +610,17 @@ export class NWCPackageManager implements ILogging {
 				startEvent.xtensionEventConfiguration.eventManagerSubscription = packagedWorkflow.eventManagerSubscription
 			}
 		}
+
+		//datasources
+		for (var datasource of this.package.datasources) {
+			const targetDatasource = deployment.datasources.find(ds => ds.contractId == datasource.id)
+			if (targetDatasource) {
+				source.workflowDefinition = source.workflowDefinition.split(`${datasource.datasourceId}`).join(`${targetDatasource.id}`)
+				source.workflowDefinition = source.workflowDefinition.split(`${datasource.datasourceName}`).join(`${targetDatasource.name}`)
+				source.datasources = source.datasources.split(`${datasource.datasourceId}`).join(`${targetDatasource.id}`)
+			}
+		}
+		source.workflowDefinitionAsObject = JSON.parse(source.workflowDefinition)
 
 		// Ensure that the source targets the correct region
 		this.ensureCorrectRegion(source)

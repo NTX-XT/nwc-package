@@ -559,10 +559,12 @@ export class NWCPackageManager implements ILogging {
 						const sourceConnectionId = foundConnectionIdParameter.value.primitiveValue!.valueType.data.value
 						const connectionFoundAndMapped = this.tenant.connections.find(cn => cn.id === sourceConnectionId)
 						if (!connectionFoundAndMapped) {
-							const sourceConnection = this.package.connectors.find(cn => cn.connectionId === sourceConnectionId)!
-							const targetConnection = deployment.connections.find(cn => cn.contractName === sourceConnection.name)!
-							if (targetConnection) {
-								foundConnectionIdParameter.value.primitiveValue!.valueType.data.value = targetConnection.id
+							const sourceConnection = this.package.connectors.find(cn => cn.connectionId === sourceConnectionId)
+							if (sourceConnection) {
+								const targetConnection = deployment.connections.find(cn => cn.contractName === sourceConnection.name)!
+								if (targetConnection) {
+									foundConnectionIdParameter.value.primitiveValue!.valueType.data.value = targetConnection.id
+								}
 							}
 						}
 					}
@@ -612,12 +614,19 @@ export class NWCPackageManager implements ILogging {
 		}
 
 		//datasources
+		source.workflowDefinition = JSON.stringify(source.workflowDefinitionAsObject)
 		for (var datasource of this.package.datasources) {
 			const targetDatasource = deployment.datasources.find(ds => ds.contractId == datasource.id)
 			if (targetDatasource) {
 				source.workflowDefinition = source.workflowDefinition.split(`${datasource.datasourceId}`).join(`${targetDatasource.id}`)
 				source.workflowDefinition = source.workflowDefinition.split(`${datasource.datasourceName}`).join(`${targetDatasource.name}`)
 				source.datasources = source.datasources.split(`${datasource.datasourceId}`).join(`${targetDatasource.id}`)
+
+				const startEvent = source.startEvents[0]
+				if (startEvent?.webformDefinition) {
+					startEvent!.webformDefinition = startEvent!.webformDefinition.split(`${datasource.datasourceId}`).join(`${targetDatasource.id}`)
+					startEvent!.webformDefinition = startEvent!.webformDefinition.split(`${datasource.datasourceName}`).join(`${targetDatasource.name}`)
+				}
 			}
 		}
 		source.workflowDefinitionAsObject = JSON.parse(source.workflowDefinition)

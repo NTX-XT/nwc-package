@@ -9,8 +9,8 @@ var deleteLines = require('gulp-delete-lines');
 var tsProject = ts.createProject("tsconfig.json");
 
 gulp.task("clean", async() => {
-    del("./dist/*");
-});
+        del("./dist/*");
+    });
 
 gulp.task("build", async() => {
     const tsResult =

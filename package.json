@@ -1,6 +1,6 @@
 {
 	"name": "nwc-package",
-	"version": "1.1.8",
+	"version": "1.1.9",
 	"description": "Experimental packaging and deployment for the Nintex Workflow Cloud platform",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
@@ -29,7 +29,6 @@
 	"author": "John Pouliezos",
 	"license": "MIT",
 	"dependencies": {
-		"ntx-utils": "^1.1.0",
-		"nwc-sdk": "^1.1.7"
+		"nwc-sdk": "^1.1.8"
 	}
 }

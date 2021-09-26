@@ -1,6 +1,5 @@
 import { readFileSync, writeFileSync } from 'fs'
 import {
-	INWCTenantConnectionInfo,
 	NWCTenant,
 	INWCWorkflowSource,
 	INWCWorkflowAction,
@@ -13,7 +12,6 @@ import { INWCPackage } from './model/INWCPackage'
 import { INWCPackageDeploymentOutcome } from './model/INWCPackageDeploymentOutcome'
 import { INWCPackageWorkflow } from './model/INWCPackageWorkflow'
 import { INWCPackageWorkflowConnector } from './model/INWCPackageWorkflowConnector'
-import { ILogging, LogWithStyle } from 'ntx-utils'
 import * as path from 'path'
 import { INWCPackageWorkflowDatasource } from './model/INWCPackageWorkflowDatasource'
 
@@ -25,14 +23,21 @@ interface IWorkflowDependency {
 	key: string
 }
 
-export class NWCPackageManager implements ILogging {
+export class NWCPackageManager {
 	public package: INWCPackage
 	public tenant: NWCTenant
-	log: LogWithStyle
 
-	public constructor(packageKey?: string, existingPackage?: INWCPackage) {
+	public static createWithKey(tenant: NWCTenant, packageKey: string): NWCPackageManager {
+		return new NWCPackageManager(tenant, packageKey, undefined)
+	}
+
+	public static createFromExistingPackage(tenant: NWCTenant, existingPackage: INWCPackage): NWCPackageManager {
+		return new NWCPackageManager(tenant, undefined, existingPackage)
+	}
+
+	private constructor(tenant: NWCTenant, packageKey?: string, existingPackage?: INWCPackage) {
 		this.package = existingPackage === undefined || existingPackage == null ? ({} as INWCPackage) : existingPackage
-
+		this.tenant = tenant
 		if (!this.package.key && packageKey) {
 			this.package.key = packageKey
 		}
@@ -47,18 +52,6 @@ export class NWCPackageManager implements ILogging {
 		if (!this.package.datasources) {
 			this.package.datasources = [] as INWCPackageWorkflowDatasource[]
 		}
-
-		this.tenant = new NWCTenant()
-		this.log = new LogWithStyle()
-	}
-
-	public setLogging(logToConsole: boolean, logApiCalls: boolean = false) {
-		this.tenant.setLogging(logApiCalls)
-		this.log.logToConsole = logToConsole
-	}
-
-	public async connect(connectionInfo: INWCTenantConnectionInfo) {
-		await this.tenant.connect(connectionInfo)
 	}
 
 	public static loadPackage(path?: string): INWCPackage {
@@ -72,44 +65,44 @@ export class NWCPackageManager implements ILogging {
 	}
 
 	public async buildPackage(skipExports: boolean = false, saveWorkflowsFolderPath?: string) {
-		this.log.writeStart(`Packaging ${this.package.key} from tenant ${this.tenant.tenantInfo.name}`)
+		this.tenant.log.writeStart(`Packaging ${this.package.key} from tenant ${this.tenant.tenantInfo.name}`)
 		const allWorkflows = await this.getAllPackageWorkflows()
 		await this.packageWorkflows(allWorkflows, skipExports)
 		this.packageConnectors(allWorkflows)
 		this.packageDatasources(allWorkflows)
 		this.package.sourceTenantInfo = this.tenant.tenantInfo
 		if (saveWorkflowsFolderPath) {
-			this.log.writeStart(`Saving workflow sources to folder ${saveWorkflowsFolderPath}`)
+			this.tenant.log.writeStart(`Saving workflow sources to folder ${saveWorkflowsFolderPath}`)
 			for (const source of allWorkflows) {
-				this.log.write(`Saving workflow ${source.workflowName}`)
+				this.tenant.log.write(`Saving workflow ${source.workflowName}`)
 				writeFileSync(path.join(saveWorkflowsFolderPath, `${source.workflowName}.json`), JSON.stringify(source))
 			}
-			this.log.writeSuccess(`All workflows saved to folder ${saveWorkflowsFolderPath}`)
+			this.tenant.log.writeSuccess(`All workflows saved to folder ${saveWorkflowsFolderPath}`)
 		}
-		this.log.writeSuccess(`Packaging of ${this.package.key} from tenant ${this.tenant.tenantInfo.name} completed.`)
+		this.tenant.log.writeSuccess(`Packaging of ${this.package.key} from tenant ${this.tenant.tenantInfo.name} completed.`)
 	}
 
 	public async obliterate() {
-		this.log.writeWarning(`WARNING! YOU ARE DELETING ALL ${this.package.key} WORKFLOWS FROM TENANT ${this.tenant.tenantInfo.name}`)
+		this.tenant.log.writeWarning(`WARNING! YOU ARE DELETING ALL ${this.package.key} WORKFLOWS FROM TENANT ${this.tenant.tenantInfo.name}`)
 		for (const workflow of this.package.workflows) {
-			this.log.write(`Deleting ${workflow.workflowName}`)
+			this.tenant.log.write(`Deleting ${workflow.workflowName}`)
 			const exists = await this.tenant.checkIfWorkflowExists(workflow.workflowName)
 			if (exists) {
 				const workflowOnTenant = this.tenant.workflows.find(w => {
 					return w.name === workflow.workflowName
 				})!
 				await this.tenant.deleteWorkflowSource(workflowOnTenant.id)
-				this.log.writeSuccess(`${workflow.workflowName} deleted.`)
+				this.tenant.log.writeSuccess(`${workflow.workflowName} deleted.`)
 			} else {
-				this.log.write(`${workflow.workflowName} not found on tenant`)
+				this.tenant.log.write(`${workflow.workflowName} not found on tenant`)
 			}
 		}
-		this.log.writeSuccess(`Solution ${this.package.key} deleted from ${this.tenant.tenantInfo.name}`)
+		this.tenant.log.writeSuccess(`Solution ${this.package.key} deleted from ${this.tenant.tenantInfo.name}`)
 	}
 
 	private async getAllPackageWorkflows(): Promise<INWCWorkflowSource[]> {
 		const sources = [] as INWCWorkflowSource[]
-		this.log.write(`Identifying solution workfows`)
+		this.tenant.log.write(`Identifying solution workfows`)
 		const solutionWorkflows = this.tenant.workflows.filter(wf => {
 			return wf.tags?.some((tag: { name: any }) => {
 				return tag.name === this.package.key
@@ -117,7 +110,7 @@ export class NWCPackageManager implements ILogging {
 		})
 
 		for (const solutionWorkflow of solutionWorkflows) {
-			this.log.write(`Retrieving workfow ${solutionWorkflow.name}`)
+			this.tenant.log.write(`Retrieving workfow ${solutionWorkflow.name}`)
 			const source = await this.tenant.getWorkflowSource(solutionWorkflow.id)
 			sources.push(source)
 		}
@@ -284,7 +277,7 @@ export class NWCPackageManager implements ILogging {
 	}
 
 	private async packageWorkflows(sources: INWCWorkflowSource[], skipExports: boolean = false): Promise<void> {
-		this.log.writeStart(`Identifying dependencies`)
+		this.tenant.log.writeStart(`Identifying dependencies`)
 		var deployOrder = [] as String[]
 		if (sources.length == 1) {
 			deployOrder.push(sources[0].workflowName)
@@ -368,10 +361,10 @@ export class NWCPackageManager implements ILogging {
 		const foundConnections = [] as INWCConnectionInfo[]
 
 		if (!this.canDeployToTenant()) {
-			this.log.writeError(`Tenant ${this.tenant.tenantInfo.name} is not compatible.`)
+			this.tenant.log.writeError(`Tenant ${this.tenant.tenantInfo.name} is not compatible.`)
 			return false
 		}
-		this.log.write(`Tenant ${this.tenant.tenantInfo.name} is compatible.`)
+		this.tenant.log.write(`Tenant ${this.tenant.tenantInfo.name} is compatible.`)
 		connections.forEach(connection => {
 			const foundConnection = this.tenant.connections.find(cn => {
 				return cn.id === connection.id && cn.isInvalid === false
@@ -380,19 +373,19 @@ export class NWCPackageManager implements ILogging {
 				foundConnections.push(foundConnection)
 			}
 		})
-		this.log.write(`Found ${foundConnections.length} connections against ${this.package.connectors.length} solution required connectors.`)
+		this.tenant.log.write(`Found ${foundConnections.length} connections against ${this.package.connectors.length} solution required connectors.`)
 		if (foundConnections.length < this.package.connectors.length) {
-			this.log.writeError(`Only ${foundConnections.length} out of ${this.package.connectors.length} connections found on the tenant`)
+			this.tenant.log.writeError(`Only ${foundConnections.length} out of ${this.package.connectors.length} connections found on the tenant`)
 			return false
 		}
 		if (!skipWorkflowExistsCheck) {
 			for (const packagedWorkflow of this.package.workflows) {
 				const workflowExists = await this.tenant.checkIfWorkflowExists(packagedWorkflow.workflowName)
 				if (workflowExists) {
-					this.log.writeError(`Workflow ${packagedWorkflow.workflowName} found on the tenant`)
+					this.tenant.log.writeError(`Workflow ${packagedWorkflow.workflowName} found on the tenant`)
 					return false
 				} else {
-					this.log.write(`Workflow ${packagedWorkflow.workflowName} does not exist and can be deployed`)
+					this.tenant.log.write(`Workflow ${packagedWorkflow.workflowName} does not exist and can be deployed`)
 				}
 			}
 		}
@@ -400,7 +393,7 @@ export class NWCPackageManager implements ILogging {
 	}
 
 	private canDeployToTenant(): boolean {
-		return this.tenant.tenantInfo.details.cloudElementService === this.package.sourceTenantInfo.details.cloudElementService
+		return this.tenant.tenantInfo.cloudElementService === this.package.sourceTenantInfo.cloudElementService
 	}
 
 	public getMatchingConnectionInfos(): INWCConnectionInfo[] {
@@ -430,14 +423,14 @@ export class NWCPackageManager implements ILogging {
 		datasources: INWCDataSource[] = [],
 		skipExisting: boolean = false
 	): Promise<INWCPackageDeploymentOutcome> {
-		this.log.writeStart(`Validating tenant ${this.tenant.tenantInfo.name} for deployment`)
+		this.tenant.log.writeStart(`Validating tenant ${this.tenant.tenantInfo.name} for deployment`)
 		if (skipExisting) {
-			this.log.writeWarning(`skipExisting was specified. The process will ignore existing workflows`)
+			this.tenant.log.writeWarning(`skipExisting was specified. The process will ignore existing workflows`)
 		}
 		if (!(await this.validateDeploymentTarget(connections, skipExisting))) {
 			throw new Error('Preflight validation failed. Check that you are providing the correct connections and that the tenant is compatible with the solution')
 		}
-		this.log.writeSuccess(`Validation complete.`)
+		this.tenant.log.writeSuccess(`Validation complete.`)
 		const outcome = {
 			tenant: this.tenant.tenantInfo,
 			connections: connections,
@@ -446,28 +439,28 @@ export class NWCPackageManager implements ILogging {
 			completed: false,
 		} as INWCPackageDeploymentOutcome
 
-		this.log.writeStart(`Starting deployment on tenant ${this.tenant.tenantInfo.name}`)
+		this.tenant.log.writeStart(`Starting deployment on tenant ${this.tenant.tenantInfo.name}`)
 		for (const packageWorkflowInfo of this.package.workflows) {
-			this.log.write(`Importing workflow ${packageWorkflowInfo.workflowName}`)
+			this.tenant.log.write(`Importing workflow ${packageWorkflowInfo.workflowName}`)
 			const importWorkflow = skipExisting ? !(await this.tenant.checkIfWorkflowExists(packageWorkflowInfo.workflowName)) : true
 
 			if (!importWorkflow) {
-				this.log.writeWarning(`Skipping workflow ${packageWorkflowInfo.workflowName}`)
+				this.tenant.log.writeWarning(`Skipping workflow ${packageWorkflowInfo.workflowName}`)
 				continue
 			}
 			const importedWorkflow = await this.tenant.importWorkflow(packageWorkflowInfo.exportKey, packageWorkflowInfo.workflowName)
-			this.log.write(`Getting source for ${packageWorkflowInfo.workflowName}`)
+			this.tenant.log.write(`Getting source for ${packageWorkflowInfo.workflowName}`)
 			const source = await this.tenant.getWorkflowSource(importedWorkflow.workflowId.workflowId)
-			this.log.write(`Updating definition for ${packageWorkflowInfo.workflowName}`)
+			this.tenant.log.write(`Updating definition for ${packageWorkflowInfo.workflowName}`)
 			this.updateWorkflowSource(source, packageWorkflowInfo, outcome)
-			this.log.write(`Publishing ${packageWorkflowInfo.workflowName}`)
+			this.tenant.log.write(`Publishing ${packageWorkflowInfo.workflowName}`)
 			try {
 				const publishedSource = await this.publishWorkflow(source)
 				const publishedWorkflowInfo = await this.tenant.getWorkflow(source.workflowId)
 				if (publishedWorkflowInfo) {
-					this.log.writeSuccess(`Workflow ${packageWorkflowInfo.workflowName} published`)
+					this.tenant.log.writeSuccess(`Workflow ${packageWorkflowInfo.workflowName} published`)
 				} else {
-					this.log.writeError(`Publishing of workflow ${packageWorkflowInfo.workflowName} failed`)
+					this.tenant.log.writeError(`Publishing of workflow ${packageWorkflowInfo.workflowName} failed`)
 				}
 				outcome.deployedWorkflows.push({
 					deployed: publishedWorkflowInfo,
@@ -479,11 +472,11 @@ export class NWCPackageManager implements ILogging {
 					packaged: packageWorkflowInfo,
 					publishingErrorSource: source,
 				})
-				this.log.writeError(`Workflow ${packageWorkflowInfo.workflowName} failed to deploy - ${Error}.`)
+				this.tenant.log.writeError(`Workflow ${packageWorkflowInfo.workflowName} failed to deploy - ${Error}.`)
 				return outcome
 			}
 		}
-		this.log.writeSuccess(`Workflows deployed on tenant ${this.tenant.tenantInfo.name}`)
+		this.tenant.log.writeSuccess(`Workflows deployed on tenant ${this.tenant.tenantInfo.name}`)
 		return outcome
 	}
 
@@ -499,10 +492,8 @@ export class NWCPackageManager implements ILogging {
 	}
 
 	public regionaliseString(value: string): string {
-		let regionalisedString = value.split(`/${this.package.sourceTenantInfo.details.serviceRegion}/`).join(`/${this.tenant.tenantInfo.details.serviceRegion}/`)
-		regionalisedString = regionalisedString
-			.split(`${this.package.sourceTenantInfo.details.serviceRegion}-`)
-			.join(`${this.tenant.tenantInfo.details.serviceRegion}-`)
+		let regionalisedString = value.split(`/${this.package.sourceTenantInfo.serviceRegion}/`).join(`/${this.tenant.tenantInfo.serviceRegion}/`)
+		regionalisedString = regionalisedString.split(`${this.package.sourceTenantInfo.serviceRegion}-`).join(`${this.tenant.tenantInfo.serviceRegion}-`)
 		regionalisedString = regionalisedString.split(this.package.sourceTenantInfo.host).join(this.tenant.tenantInfo.host)
 		return regionalisedString
 	}

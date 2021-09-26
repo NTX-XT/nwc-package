@@ -285,6 +285,15 @@ export class NWCPackageManager {
 			const dependencies = this.identifyWorklowDependencies(sources)
 			deployOrder = this.resolveWorkflowDeploymentOrder(dependencies)
 		}
+		for (const source of sources) {
+			const foundInDeployOrder = deployOrder.find(d => {
+				return d === source.workflowName
+			})
+			if (!foundInDeployOrder) {
+				deployOrder.push(source.workflowName)
+			}
+		}
+
 		let order = 1
 		for (var i = 0; i < deployOrder.length; i++) {
 			const workflow = sources.find(w => {

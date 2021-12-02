@@ -82,7 +82,7 @@ export class NWCPackageManager {
 		this.tenant.log.writeSuccess(`Packaging of ${this.package.key} from tenant ${this.tenant.tenantInfo.name} completed.`)
 	}
 
-	public async obliterate() {
+	public async obliterate(commit: boolean = false) {
 		this.tenant.log.writeWarning(`WARNING! YOU ARE DELETING ALL ${this.package.key} WORKFLOWS FROM TENANT ${this.tenant.tenantInfo.name}`)
 		for (const workflow of this.package.workflows) {
 			this.tenant.log.write(`Deleting ${workflow.workflowName}`)
@@ -91,7 +91,9 @@ export class NWCPackageManager {
 				const workflowOnTenant = this.tenant.workflows.find(w => {
 					return w.name === workflow.workflowName
 				})!
-				await this.tenant.deleteWorkflowSource(workflowOnTenant.id)
+				if (commit) {
+					await this.tenant.deleteWorkflowSource(workflowOnTenant.id)
+				}
 				this.tenant.log.writeSuccess(`${workflow.workflowName} deleted.`)
 			} else {
 				this.tenant.log.write(`${workflow.workflowName} not found on tenant`)
@@ -491,6 +493,7 @@ export class NWCPackageManager {
 
 	public async publishWorkflow(source: INWCWorkflowSource): Promise<INWCWorkflowSource> {
 		const payload = this.createPublishPayload(source)
+		writeFileSync(`./output/${source.workflowName}.payload.json`, JSON.stringify(payload))
 		return this.tenant.publishWorkflow(source.workflowId, payload)
 	}
 
@@ -511,6 +514,7 @@ export class NWCPackageManager {
 		// Set author to current user
 		source.workflowDefinitionAsObject!.settings.author = this.tenant.currentUser
 		var actions = NWCPackageManager.getFlatActionsArray(source.workflowDefinitionAsObject!.actions)
+
 		// Update actions
 		for (const action of actions) {
 			// Xtensions
@@ -518,22 +522,27 @@ export class NWCPackageManager {
 				for (const property of action.configuration.properties) {
 					let foundConnection = property.parameters.find(parameter => parameter.name === "['X_NTX_XTENSION_INPUT']")
 					if (foundConnection) {
+						// var connectionData = foundConnection.value.primitiveValue!.valueType.data.value
+						// if (!connectionData || (connectionData && connectionData == '')) {
+						// 	console.log('no connection data in source')
+						// 	if (action.id in packageInfo.connectionData!) {
+						// 		console.log('found connection data in package')
+						foundConnection.value.primitiveValue!.valueType.data.value = packageInfo.connectionData![action.id]
 						var connectionData = foundConnection.value.primitiveValue!.valueType.data.value
-						if (!connectionData || (connectionData && connectionData == '')) {
-							if (action.id in packageInfo.connectionData!) {
-								foundConnection.value.primitiveValue!.valueType.data.value = packageInfo.connectionData![action.id]
-								connectionData = foundConnection.value.primitiveValue!.valueType.data.value
-							}
+						//connectionData = foundConnection.value.primitiveValue!.valueType.data.value
+						// 	}
+						// }
+						//						if (connectionData) {
+						let key = connectionData.schema?.required.find((p: string) => p.includes('.path.'))
+						if (key) {
+							const connectionConfig = connectionData.value[key]
+							const targetConnection = deployment.connections.find(cn => cn.contractName === connectionConfig.data.contractName)!
+							//console.log(targetConnection)
+							connectionConfig.literal = targetConnection.id
+							connectionConfig.data = targetConnection
+							//console.log(connectionConfig)
 						}
-						if (connectionData) {
-							let key = connectionData.schema?.required.find((p: string) => p.includes('.path.'))
-							if (key) {
-								const connectionConfig = connectionData.value[key]
-								const targetConnection = deployment.connections.find(cn => cn.contractName === connectionConfig.data.contractName)!
-								connectionConfig.literal = targetConnection.id
-								connectionConfig.data = targetConnection
-							}
-						}
+						//						}
 					}
 				}
 			}
